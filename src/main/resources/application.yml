@@ -1,0 +1,7 @@
+server:
+  port: 8080
+
+app:
+  shard-count: 2
+  disruptor-buffer-size: 131072
+  wal-dir: ./wal/
