@@ -3,11 +3,9 @@ package com.matching.disruptor;
 import com.lmax.disruptor.EventHandler;
 import com.matching.core.domain.Trade;
 import com.matching.core.engine.MatchingEngineManager;
-import com.matching.wal.WalWriter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
-import java.util.Map;
 
 @Slf4j
 public class OrderEventHandler implements EventHandler<OrderEvent> {

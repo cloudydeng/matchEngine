@@ -37,7 +37,6 @@ public class DisruptorConfig {
         Disruptor<OrderEvent>[] disruptors = new Disruptor[shardCount];
 
         for (int i = 0; i < shardCount; i++) {
-            int shardId = i;
             ThreadFactory threadFactory = Executors.defaultThreadFactory();
             Disruptor<OrderEvent> disruptor = new Disruptor<>(
                     OrderEvent.EVENT_FACTORY,           // 静态 EventFactory
@@ -56,9 +55,6 @@ public class DisruptorConfig {
     }
 
 
-
-
-    // 生产者正常依赖
     @Bean
     public OrderEventProducer orderEventProducer(Disruptor<OrderEvent>[] disruptors) {
         return new OrderEventProducer(disruptors);

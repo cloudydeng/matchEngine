@@ -1,9 +1,11 @@
 package com.matching.wal;
 
 import com.matching.disruptor.OrderEvent;
+import lombok.Data;
 
 import java.io.Serializable;
 
+@Data
 public class WalEntry implements Serializable {
     private OrderEvent event;
     private long sequence;
@@ -12,5 +14,5 @@ public class WalEntry implements Serializable {
         this.event = event;
         this.sequence = sequence;
     }
-    // getters/setters
+
 }
