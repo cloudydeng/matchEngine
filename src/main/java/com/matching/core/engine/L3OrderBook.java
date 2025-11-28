@@ -22,8 +22,8 @@ public final class L3OrderBook {
     private final ConcurrentSkipListMap<BigDecimal, PriceLevel> asks = new ConcurrentSkipListMap<>(Comparator.naturalOrder());
     private final ConcurrentHashMap<String, OrderEntry> orderIndex = new ConcurrentHashMap<>();
 
-    private volatile boolean fiveLevelProtection = true;
-    private static final int MAX_LEVELS = 5;
+    private volatile boolean fiveLevelProtection = false;
+    private static final int MAX_LEVELS = 30;
 
     public L3OrderBook(String symbol, MarketDataPublisher publisher) {
         this.symbol = symbol;

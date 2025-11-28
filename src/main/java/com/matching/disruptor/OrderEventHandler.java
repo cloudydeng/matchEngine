@@ -19,10 +19,6 @@ public class OrderEventHandler implements EventHandler<OrderEvent> {
         List<Trade> trades = null;
         if ("SUBMIT".equals(event.getAction())) {
             trades = engine.submitOrder(event.getOrder());
-            log.info("success publish to " + event.getOrder().getOrderId());
-            if (trades != null) {
-                log.info("Trade: success");
-            }
         } else if ("CANCEL".equals(event.getAction())) {
             // 撤单：需实现 OrderId -> price/qty 映射，这里简化
             engine.cancelOrder(event.getOrder().getOrderId());

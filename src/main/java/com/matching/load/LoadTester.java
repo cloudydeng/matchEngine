@@ -71,7 +71,8 @@ public class LoadTester implements ApplicationRunner {
         req.setSide(Side.valueOf(ThreadLocalRandom.current().nextBoolean() ? "BUY" : "SELL"));
         req.setType(ThreadLocalRandom.current().nextBoolean() ? OrderType.LIMIT : OrderType.MARKET);
         if (!req.getType().equals(OrderType.MARKET)) {
-            req.setPrice(new BigDecimal(1000));
+            BigDecimal  price = ThreadLocalRandom.current().nextBoolean() ? BigDecimal.valueOf(0.1) : BigDecimal.valueOf(0.2);
+            req.setPrice(BigDecimal.valueOf(Math.random()).multiply(price));
         }
         req.setQuantity(BigDecimal.valueOf(0.001 + ThreadLocalRandom.current().nextDouble() * 0.2));
         orderController.submitOrder(req);
