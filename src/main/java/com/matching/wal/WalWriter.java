@@ -22,22 +22,21 @@ public class WalWriter {
 
     public void append(OrderEvent event) {
         try {
-            // 序列化写入（简化，用 JSON 或自定义）
+
             String entry = event.getOrder().getOrderId() + "|" + event.getAction() + "\n";
             raf.write(entry.getBytes());
-            raf.getFD().sync(); // 强制落盘
+            raf.getFD().sync();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    // 重放：启动时读取 wal 文件恢复状态（简化实现）
+
     public void replay() throws IOException {
-        // 读取文件，重放事件到 Shard
+
         try (BufferedReader br = new BufferedReader(new FileReader(walFile))) {
             String line;
             while ((line = br.readLine()) != null) {
-                // 解析 line，重放 OrderEvent
                 System.out.println("Replay: " + line);
             }
         }

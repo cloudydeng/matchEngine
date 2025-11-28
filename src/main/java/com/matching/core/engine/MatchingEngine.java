@@ -4,6 +4,7 @@ import com.matching.core.domain.DepthLevel;
 import com.matching.core.domain.Order;
 import com.matching.core.domain.Trade;
 import com.matching.core.persistence.OrderBookPersistence;
+import com.matching.disruptor.MarketDataPublisher;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
@@ -17,14 +18,14 @@ public class MatchingEngine {
     private final String symbol;                    // 关键：这个引擎只管这个 symbol
     private final L3OrderBook orderBook;
     private final OrderBookPersistence persistence;
-// 改用我们之前写好的 L3 版
+    private final MarketDataPublisher publisher;
 
-    public MatchingEngine(String symbol) throws IOException {
+
+    public MatchingEngine(String symbol,MarketDataPublisher publisher) throws IOException {
         this.symbol = symbol;
-        this.orderBook = new L3OrderBook(symbol);
-
-            this.persistence = new OrderBookPersistence(orderBook, symbol);
-
+        this.orderBook = new L3OrderBook(symbol,publisher);
+        this.persistence = new OrderBookPersistence(orderBook, symbol);
+        this.publisher = publisher;
     }
 
 

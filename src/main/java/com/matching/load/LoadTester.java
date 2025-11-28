@@ -27,10 +27,10 @@ public class LoadTester implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
-        log.info("LoadTester 自动启动！开始狂轰 100 万订单...");
+        log.info("LoadTester  100M...");
 
-        long totalOrders = 1000000000L;      // ← 改这里控制订单数量
-        int threads = Runtime.getRuntime().availableProcessors() * 4; // 用满 CPU
+        long totalOrders = 1000000000L;
+        int threads = Runtime.getRuntime().availableProcessors() * 4;
 
         ExecutorService executor = Executors.newFixedThreadPool(threads);
         long perThread = totalOrders / threads;
@@ -49,7 +49,7 @@ public class LoadTester implements ApplicationRunner {
             });
         }
 
-        // 最后一点尾巴订单
+
         for (long j = 0; j < totalOrders % threads; j++) {
             sendRandomOrder();
             successCount.incrementAndGet();
@@ -60,10 +60,8 @@ public class LoadTester implements ApplicationRunner {
 
         double seconds = (System.nanoTime() - start) / 1_000_000_000.0;
         long success = successCount.get();
-        log.info("%n压测完成！%n");
-        log.info("总订单：%,d   成功：%,d   失败：%,d%n", totalOrders, success, failCount.get());
-        log.info("用时：%.2f 秒   QPS：%,.0f%n", seconds, success / seconds);
-        log.info("LoadTester 执行完毕，服务继续运行中...（可继续下单）");
+        log.info("%n done！%n");
+
     }
 
     private void sendRandomOrder() {
@@ -72,7 +70,9 @@ public class LoadTester implements ApplicationRunner {
         req.setSymbol(ThreadLocalRandom.current().nextBoolean() ? "BTCUSDT" : "ETHUSDT");
         req.setSide(Side.valueOf(ThreadLocalRandom.current().nextBoolean() ? "BUY" : "SELL"));
         req.setType(ThreadLocalRandom.current().nextBoolean() ? OrderType.LIMIT : OrderType.MARKET);
-        req.setPrice(new BigDecimal(1000));
+        if (!req.getType().equals(OrderType.MARKET)) {
+            req.setPrice(new BigDecimal(1000));
+        }
         req.setQuantity(BigDecimal.valueOf(0.001 + ThreadLocalRandom.current().nextDouble() * 0.2));
         orderController.submitOrder(req);
     }

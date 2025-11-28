@@ -1,7 +1,8 @@
-// 7. L3OrderBook.java（完整生产级最终版 - 不抛异常，打日志）
+// L3OrderBook.java —— 2025 年生产级终极版（已集成行情推送 + 防 NPE + 5 个触发点全覆盖）
 package com.matching.core.engine;
 
 import com.matching.core.domain.*;
+import com.matching.disruptor.MarketDataPublisher;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
@@ -14,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class L3OrderBook {
 
     private final String symbol;
+    private final MarketDataPublisher publisher;
     private final AtomicLong seq = new AtomicLong(0);
 
     private final ConcurrentSkipListMap<BigDecimal, PriceLevel> bids = new ConcurrentSkipListMap<>(Comparator.reverseOrder());
@@ -23,8 +25,19 @@ public final class L3OrderBook {
     private volatile boolean fiveLevelProtection = true;
     private static final int MAX_LEVELS = 5;
 
-    public L3OrderBook(String symbol) {
+    public L3OrderBook(String symbol, MarketDataPublisher publisher) {
         this.symbol = symbol;
+        this.publisher = publisher;
+        log.info("L3OrderBook 初始化完成: {}", symbol);
+    }
+
+    // 安全推送（防 NPE 终极版）
+    private void fireDepthUpdate(BigDecimal price, BigDecimal newQty, Side side) {
+        if (publisher != null && price != null && side != null) {
+            boolean isBid = side == Side.BUY;
+            BigDecimal qty = (newQty == null || newQty.signum() < 0) ? BigDecimal.ZERO : newQty;
+            publisher.publishUpdate(symbol, price, qty, isBid);
+        }
     }
 
     private static class PriceLevel {
@@ -73,13 +86,14 @@ public final class L3OrderBook {
         List<Trade> trades = new ArrayList<>();
         BigDecimal remain = mo.getQuantity();
         var opposite = mo.getSide() == Side.BUY ? asks : bids;
+        Side makerSide = mo.getSide() == Side.BUY ? Side.SELL : Side.BUY;
 
         int level = 0;
         var iter = mo.getSide() == Side.BUY ? opposite.keySet().iterator() : opposite.descendingKeySet().iterator();
 
         while (iter.hasNext() && remain.signum() > 0) {
             if (fiveLevelProtection && ++level > MAX_LEVELS) {
-                log.warn("Market order {} rejected: exceed 5 levels, remain {}", mo.getOrderId(), remain);
+                log.warn("Market order {} rejected: exceed 5 levels", mo.getOrderId());
                 mo.setStatus(OrderStatus.REJECTED);
                 mo.setRejectReason("EXCEED_FIVE_LEVELS");
                 break;
@@ -87,6 +101,12 @@ public final class L3OrderBook {
 
             BigDecimal price = iter.next();
             PriceLevel levelData = opposite.get(price);
+            if (levelData == null || levelData.orders.isEmpty()) {
+                iter.remove();
+                fireDepthUpdate(price, BigDecimal.ZERO, makerSide);
+                continue;
+            }
+
             var orderIter = levelData.orders.values().iterator();
 
             while (orderIter.hasNext() && remain.signum() > 0) {
@@ -109,7 +129,12 @@ public final class L3OrderBook {
                     .map(e -> e.remain)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-            if (levelData.orders.isEmpty()) iter.remove();
+            fireDepthUpdate(price, levelData.totalQty, makerSide);
+
+            if (levelData.orders.isEmpty()) {
+                iter.remove();
+                fireDepthUpdate(price, BigDecimal.ZERO, makerSide);
+            }
         }
 
         mo.setStatus(remain.signum() > 0 ? OrderStatus.REJECTED : OrderStatus.FILLED);
@@ -120,6 +145,7 @@ public final class L3OrderBook {
         List<Trade> trades = new ArrayList<>();
         BigDecimal remain = lo.getQuantity();
         Side side = lo.getSide();
+        Side makerSide = side == Side.BUY ? Side.SELL : Side.BUY;
         BigDecimal limit = lo.getPrice();
         var opposite = side == Side.BUY ? asks : bids;
 
@@ -138,12 +164,18 @@ public final class L3OrderBook {
             if (side == Side.SELL && price.compareTo(limit) < 0) break;
 
             PriceLevel level = opposite.get(price);
+            if (level == null || level.orders.isEmpty()) {
+                iter.remove();
+                fireDepthUpdate(price, BigDecimal.ZERO, makerSide);
+                continue;
+            }
+
             var orderIter = level.orders.values().iterator();
 
             while (orderIter.hasNext() && remain.signum() > 0) {
                 OrderEntry maker = orderIter.next();
                 if (maker.order.getUserId() != null && maker.order.getUserId().equals(lo.getUserId())) {
-                    continue; // 防自成交
+                    continue;
                 }
 
                 BigDecimal fill = remain.min(maker.remain);
@@ -161,12 +193,19 @@ public final class L3OrderBook {
             }
 
             level.totalQty = level.orders.values().stream().map(e -> e.remain).reduce(BigDecimal.ZERO, BigDecimal::add);
-            if (level.orders.isEmpty()) iter.remove();
+            fireDepthUpdate(price, level.totalQty, makerSide);
+
+            if (level.orders.isEmpty()) {
+                iter.remove();
+                fireDepthUpdate(price, BigDecimal.ZERO, makerSide);
+            }
         }
 
         if (remain.signum() > 0) {
             addToBook(lo, remain);
             lo.setStatus(lo.getFilledQuantity().signum() > 0 ? OrderStatus.PARTIALLY_FILLED : OrderStatus.NEW);
+            // 挂单成功也推一次
+            fireDepthUpdate(lo.getPrice(), remain, lo.getSide());
         } else {
             lo.setStatus(OrderStatus.FILLED);
         }
@@ -208,12 +247,17 @@ public final class L3OrderBook {
 
         e.level.orders.remove(e.ts);
         e.level.totalQty = e.level.totalQty.subtract(e.remain);
+
+        fireDepthUpdate(e.price, e.level.totalQty, e.order.getSide());
+
         if (e.level.orders.isEmpty()) {
             (e.order.getSide() == Side.BUY ? bids : asks).remove(e.price);
+            fireDepthUpdate(e.price, BigDecimal.ZERO, e.order.getSide());
         }
         return true;
     }
 
+    // getDepth、snapshot 方法保持不变...
     public List<DepthLevel> getDepth(int levels) {
         List<DepthLevel> list = new ArrayList<>();
         int c = 0;
@@ -222,7 +266,6 @@ public final class L3OrderBook {
         for (var e : asks.entrySet()) { if (++c > levels) break; list.add(new DepthLevel(e.getKey(), e.getValue().totalQty)); }
         return list;
     }
-
 
     public List<Map.Entry<BigDecimal, BigDecimal>> getBidsForSnapshot() {
         return bids.entrySet().stream()
