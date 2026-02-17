@@ -39,7 +39,7 @@ public class DisruptorConfig {
         for (int i = 0; i < shardCount; i++) {
             ThreadFactory threadFactory = Executors.defaultThreadFactory();
             Disruptor<OrderEvent> disruptor = new Disruptor<>(
-                    OrderEvent.EVENT_FACTORY,           // 静态 EventFactory
+                    OrderEvent.EVENT_FACTORY,
                     bufferSize,
                     threadFactory,
                     ProducerType.SINGLE,

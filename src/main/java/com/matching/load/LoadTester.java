@@ -27,40 +27,40 @@ public class LoadTester implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
-        log.info("LoadTester  100M...");
-
-        long totalOrders = 1000000000L;
-        int threads = Runtime.getRuntime().availableProcessors() * 4;
-
-        ExecutorService executor = Executors.newFixedThreadPool(threads);
-        long perThread = totalOrders / threads;
-        long start = System.nanoTime();
-
-        for (int i = 0; i < threads; i++) {
-            executor.submit(() -> {
-                for (long j = 0; j < perThread; j++) {
-                    try {
-                        sendRandomOrder();
-                        successCount.incrementAndGet();
-                    } catch (Exception e) {
-                        failCount.incrementAndGet();
-                    }
-                }
-            });
-        }
-
-
-        for (long j = 0; j < totalOrders % threads; j++) {
-            sendRandomOrder();
-            successCount.incrementAndGet();
-        }
-
-        executor.shutdown();
-        executor.awaitTermination(10, TimeUnit.MINUTES);
-
-        double seconds = (System.nanoTime() - start) / 1_000_000_000.0;
-        long success = successCount.get();
-        log.info("%n done！%n");
+//        log.info("LoadTester  100M...");
+//
+//        long totalOrders = 1000000000L;
+//        int threads = Runtime.getRuntime().availableProcessors() * 4;
+//
+//        ExecutorService executor = Executors.newFixedThreadPool(threads);
+//        long perThread = totalOrders / threads;
+//        long start = System.nanoTime();
+//
+//        for (int i = 0; i < threads; i++) {
+//            executor.submit(() -> {
+//                for (long j = 0; j < perThread; j++) {
+//                    try {
+//                        sendRandomOrder();
+//                        successCount.incrementAndGet();
+//                    } catch (Exception e) {
+//                        failCount.incrementAndGet();
+//                    }
+//                }
+//            });
+//        }
+//
+//
+//        for (long j = 0; j < totalOrders % threads; j++) {
+//            sendRandomOrder();
+//            successCount.incrementAndGet();
+//        }
+//
+//        executor.shutdown();
+//        executor.awaitTermination(10, TimeUnit.MINUTES);
+//
+//        double seconds = (System.nanoTime() - start) / 1_000_000_000.0;
+//        long success = successCount.get();
+//        log.info("%n done！%n");
 
     }
 

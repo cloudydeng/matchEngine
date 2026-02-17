@@ -17,6 +17,7 @@ public class MatchingEngine {
     @Getter
     private final String symbol;                    // 关键：这个引擎只管这个 symbol
     private final L3OrderBook orderBook;
+    @Getter
     private final OrderBookPersistence persistence;
     private final MarketDataPublisher publisher;
 
@@ -57,8 +58,14 @@ public class MatchingEngine {
      * 兼容旧接口：用 clientOrderId 撤单（Binance 也支持）
      */
     public boolean cancelOrderByClientOrderId(String clientOrderId) {
-        // 实际生产要维护 clientOrderId → orderId 映射，这里简化
-        return false;
+        // 使用 ClientOrderIndex 查找 orderId
+        String orderId = com.matching.disruptor.OrderEventHandler.getClientOrderIndex()
+                .getOrderId(symbol, clientOrderId);
+        if (orderId == null) {
+            log.warn("Cancel failed: clientOrderId not found: {}", clientOrderId);
+            return false;
+        }
+        return cancelOrder(orderId);
     }
 
     // ==================== 行情接口（给 WebSocket 推送）===================
