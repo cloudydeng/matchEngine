@@ -1,4 +1,4 @@
-// L3OrderBook.java —— 2025 年生产级终极版（已集成行情推送 + 防 NPE + 5 个触发点全覆盖）
+
 package com.matching.core.engine;
 
 import com.matching.core.domain.*;
@@ -22,8 +22,8 @@ public final class L3OrderBook {
     private final ConcurrentSkipListMap<BigDecimal, PriceLevel> asks = new ConcurrentSkipListMap<>(Comparator.naturalOrder());
     private final ConcurrentHashMap<String, OrderEntry> orderIndex = new ConcurrentHashMap<>();
 
-    private volatile boolean fiveLevelProtection = true;
-    private static final int MAX_LEVELS = 5;
+    private volatile boolean fiveLevelProtection = false;
+    private static final int MAX_LEVELS = 30;
 
     public L3OrderBook(String symbol, MarketDataPublisher publisher) {
         this.symbol = symbol;
@@ -31,7 +31,7 @@ public final class L3OrderBook {
         log.info("L3OrderBook 初始化完成: {}", symbol);
     }
 
-    // 安全推送（防 NPE 终极版）
+
     private void fireDepthUpdate(BigDecimal price, BigDecimal newQty, Side side) {
         if (publisher != null && price != null && side != null) {
             boolean isBid = side == Side.BUY;

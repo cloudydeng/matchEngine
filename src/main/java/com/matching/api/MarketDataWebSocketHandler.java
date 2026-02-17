@@ -30,7 +30,7 @@ public class MarketDataWebSocketHandler {
                           int levels) {
         String json = buildDepthJson(symbol, bids, asks, levels);
         TextMessage message = new TextMessage(json);
-
+        log.info("websocket push message {}",json);
         sessions.parallelStream().forEach(session -> {
             try {
                 if (session.isOpen()) {
