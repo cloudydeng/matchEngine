@@ -5,3 +5,34 @@ app:
   shard-count: 2
   disruptor-buffer-size: 131072
   wal-dir: ./wal/
+
+# 风控配置
+risk:
+  # 频率限制
+  order:
+    rate-limit: 100        # 每秒最多下单数
+  cancel:
+    rate-limit: 50         # 每秒最多撤单数
+  api:
+    rate-limit: 200        # 每秒最多API调用数
+
+  # 数量限制
+  max-open-orders: 200      # 每个交易对最多挂单数
+  max-order-amount: 100000  # 单笔最大金额（USDT）
+  daily-limit: 10000       # 日交易量限制（USDT）
+
+  # 价格限制
+  max-price-deviation: 0.5  # 最大价格偏离度（50%）
+  min-tick-size: 0.01      # 最小价格变动单位
+  min-qty: 0.001           # 最小数量
+
+  # BTCUSDT 价格范围
+  btcusdt:
+    min-price: 1000         # 最小价格
+    max-price: 1000000      # 最大价格
+
+# Opinion API 配置
+opinion:
+  api:
+    base: https://proxy.opinion.trade:8443/openapi
+    key: M6IL72onrUqGcwKhkHaMRknpVs9OJPvx
