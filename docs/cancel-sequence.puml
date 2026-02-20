@@ -1,0 +1,114 @@
+@startuml Cancel Order Sequence Diagram
+title 撤单流程（支持 orderId 和 clientOrderId）
+
+actor Client
+participant "OrderController" as Controller
+participant "CancelRequest\nDTO" as RequestDTO
+participant "OrderEvent\nProducer" as Producer
+participant "Disruptor\nRingBuffer" as Disruptor
+participant "OrderEvent\nHandler" as Handler
+participant "MatchingEngine\nManager" as Manager
+participant "MatchingEngine" as Engine
+participant "ClientOrder\nIndex" as Index
+participant "L3OrderBook" as OrderBook
+participant "WalWriter" as WAL
+
+Client -> Controller: POST /api/cancel
+activate Controller
+
+Controller -> RequestDTO: 创建 CancelRequest
+activate RequestDTO
+RequestDTO --> Controller: {orderId/clientOrderId,\nsymbol}
+deactivate RequestDTO
+
+Controller -> Controller: 转换为 Order
+Controller -> Producer: publish(event)
+activate Producer
+
+Producer -> Disruptor: 发布到环形缓冲区
+activate Disruptor
+Disruptor --> Producer
+deactivate Disruptor
+deactivate Producer
+
+== Disruptor 消费撤单事件 ==
+
+Disruptor -> Handler: onEvent(event, action=CANCEL)
+activate Handler
+
+Handler -> Manager: getEngine(symbol)
+activate Manager
+Manager --> Handler: 返回 MatchingEngine
+deactivate Manager
+
+note right of Handler
+  判断撤单方式：
+  - clientOrderId 非空：需转换
+  - 否则直接使用 orderId
+end note
+
+alt 使用 clientOrderId 撤单
+    Handler -> Index: getOrderId(symbol, clientOrderId)
+    activate Index
+    Index --> Handler: 返回 orderId
+    deactivate Index
+
+    alt orderId 未找到
+        Handler -> Handler: log.warn\n"clientOrderId not found"
+        Handler --> Client: 撤单失败
+        deactivate Handler
+        return
+    end
+end
+
+note right of Handler
+  1. 先写入 WAL (写前日志)
+end note
+
+Handler -> WAL: appendOrderCancel(orderId)
+activate WAL
+WAL -> WAL: 序列化 ORDER_CANCEL|...\nfsync 强制刷盘
+WAL --> Handler
+deactivate WAL
+
+Handler -> Engine: cancelOrder(orderId)
+activate Engine
+
+Engine -> OrderBook: cancelOrder(orderId)
+activate OrderBook
+
+OrderBook -> OrderBook: 从索引中查找 OrderEntry
+OrderBook -> OrderBook: 从价格档位中移除
+OrderBook -> OrderBook: 更新深度
+
+OrderBook --> Engine: 返回 success/fail
+deactivate OrderBook
+
+alt 撤单成功
+    Engine --> Handler: true
+    deactivate Engine
+
+    note right of Handler
+      2. 清理索引映射
+    end note
+
+    Handler -> Index: remove(orderId)
+    activate Index
+    Index --> Handler
+    deactivate Index
+
+    Handler --> Client: Cancel submitted
+else 撤单失败
+    Engine --> Handler: false
+    deactivate Engine
+
+    Handler -> Handler: log.warn\n"order not found"
+    Handler --> Client: 撤单失败
+end
+
+deactivate Handler
+
+Controller --> Client: 返回响应
+deactivate Controller
+
+@enduml

@@ -1,0 +1,119 @@
+@startuml MatchEngine Sequence Diagram
+title 撮合引擎订单提交流程
+
+actor Client
+participant "OrderController" as Controller
+participant "OrderRequest\nDTO" as RequestDTO
+participant "OrderEvent\nProducer" as Producer
+participant "Disruptor\nRingBuffer" as Disruptor
+participant "OrderEvent\nHandler" as Handler
+participant "MatchingEngine\nManager" as Manager
+participant "MatchingEngine\n(symbol)" as Engine
+participant "OrderBook\n(L3)" as OrderBook
+participant "ClientOrder\nIndex" as Index
+participant "WalWriter" as WAL
+participant "L3OrderBook" as L3Book
+participant "MarketData\nPublisher" as Publisher
+
+Client -> Controller: POST /api/order
+activate Controller
+
+Controller -> RequestDTO: 创建 OrderRequest
+activate RequestDTO
+RequestDTO --> Controller
+deactivate RequestDTO
+
+Controller -> Controller: 转换为 Order
+Controller -> Producer: publish(event)
+activate Producer
+
+Producer -> Disruptor: 发布到环形缓冲区
+activate Disruptor
+Disruptor --> Producer
+deactivate Disruptor
+deactivate Producer
+
+== Disruptor 消费事件 ==
+
+Disruptor -> Handler: onEvent(event)
+activate Handler
+
+Handler -> Manager: getEngine(symbol)
+activate Manager
+Manager --> Handler: 返回 MatchingEngine
+deactivate Manager
+
+note right of Handler
+  1. 先写入 WAL (写前日志)
+end note
+
+Handler -> WAL: appendOrderSubmit(order)
+activate WAL
+WAL -> WAL: 序列化 WalRecord\nORDER_SUBMIT|...
+WAL -> WAL: fsync 强制刷盘
+WAL --> Handler
+deactivate WAL
+
+Handler -> Engine: submitOrder(order)
+activate Engine
+
+Engine -> OrderBook: processOrder(order)
+activate OrderBook
+
+alt 市价单
+    OrderBook -> OrderBook: matchMarket(order)
+else 限价单
+    OrderBook -> OrderBook: matchLimit(order)
+end
+
+group 撮合循环
+    OrderBook -> L3Book: 查询对手盘
+    activate L3Book
+    L3Book --> OrderBook: 返回价格档位
+    deactivate L3Book
+
+    OrderBook -> OrderBook: 撮合成交\n创建 Trade
+end note right of OrderBook
+    价格-时间优先
+    自成交预防
+end
+
+OrderBook -> Publisher: fireDepthUpdate()
+activate Publisher
+Publisher --> OrderBook
+deactivate Publisher
+
+OrderBook --> Engine: 返回 List<Trade>
+deactivate OrderBook
+
+Engine -> WAL: appendTrade(trade)
+activate WAL
+loop 每笔成交
+    WAL -> WAL: 序列化 TRADE|...\nfsync 刷盘
+end
+WAL --> Engine
+deactivate WAL
+
+Engine --> Handler: 返回成交列表
+deactivate Engine
+
+note right of Handler
+  2. 建立映射关系
+end note
+
+Handler -> Index: put(symbol, clientOrderId, orderId)
+activate Index
+Index --> Handler
+deactivate Index
+
+note right of Handler
+  3. 返回结果
+end note
+
+Handler --> Client: Order submitted
+deactivate Handler
+
+Controller --> Client: 返回成功响应
+deactivate Controller
+
+@enduml

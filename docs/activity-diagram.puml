@@ -1,0 +1,92 @@
+@startuml Activity Diagram
+title 订单撮合活动流程
+
+start
+
+:接收 HTTP 请求\nPOST /api/order];
+
+:解析 OrderRequest\n验证参数];
+
+if (验证失败?) then (是)
+    :返回 400 错误\n拒绝订单];
+    stop
+endif
+
+:创建 Order 对象\n设置默认值];
+
+if (没有 orderId?) then (是)
+    :自动生成 orderId\nsymbol + nanoTime];
+endif
+
+:创建 OrderEvent\naction = "SUBMIT"];
+
+:发布到 Disruptor\nRingBuffer];
+
+partition "Disruptor 消费" {
+    :等待可用 slot];
+
+    :获取 OrderEvent];
+
+    :根据 symbol 路由\n到对应的引擎];
+
+    :写入 WAL\nORDER_SUBMIT 记录\nfsync 刷盘];
+
+    :调用 MatchingEngine\nsubmitOrder(order)];
+
+    partition "L3OrderBook 撮合" {
+        if (市价单?) then (是)
+            :从对手盘查找订单];
+            while (还有订单?\n数量 > 0) then (是)
+                :撮合成交];
+                :创建 Trade];
+                :更新剩余数量];
+                if (订单完全成交?) then (是)
+                    :从订单簿移除];
+                endif
+            endwhile
+            :设置状态 = FILLED/REJECTED];
+        else (限价单)
+            :计算可撮合价格范围];
+            while (价格可撮合?\n数量 > 0) then (是)
+                :从对手盘查找订单];
+                :自成交预防检查\n相同 userId 跳过];
+                :撮合成交];
+                :创建 Trade];
+                :更新剩余数量];
+                if (订单完全成交?) then (是)
+                    :从订单簿移除];
+                endif
+                :写入 WAL\nTRADE 记录];
+            endwhile
+
+            if (还有剩余数量?) then (是)
+                :挂单到订单簿];
+                :更新深度索引];
+                :设置状态 = NEW/PARTIALLY_FILLED];
+                :发布深度更新];
+            else (完全成交)
+                :设置状态 = FILLED];
+            endif
+        endif
+    }
+
+    if (使用了 clientOrderId?) then (是)
+        :建立映射关系\nclientOrderId -> orderId];
+    endif
+
+    :返回响应给客户端];
+}
+
+:返回 HTTP 响应\n200 OK];
+
+stop
+
+note right
+  核心规则：
+  - 价格优先：买单从高到低，卖单从低到高
+  - 时间优先：同价位按纳秒时间戳
+  - 自成交预防：同一用户订单不撮合
+  - 五档保护：防止大单扫盘超过 30 层
+end note
+
+@enduml

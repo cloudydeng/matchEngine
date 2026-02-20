@@ -1,0 +1,230 @@
+@startuml Class Diagram
+title 撮合引擎核心类图
+
+class Order {
+    - String orderId
+    - String clientOrderId
+    - String symbol
+    - Side side
+    - OrderType type
+    - BigDecimal price
+    - BigDecimal quantity
+    - String userId
+    - OrderStatus status
+    - long timestamp
+    - BigDecimal filledQuantity
+    + addFilledQuantity(BigDecimal)
+}
+
+class Trade {
+    - String tradeId
+    - String symbol
+    - Side side
+    - BigDecimal price
+    - BigDecimal quantity
+    - String buyOrderId
+    - String sellOrderId
+}
+
+enum Side {
+    BUY
+    SELL
+}
+
+enum OrderType {
+    LIMIT
+    MARKET
+}
+
+enum OrderStatus {
+    NEW
+    PARTIALLY_FILLED
+    FILLED
+    REJECTED
+}
+
+enum TimeInForce {
+    GTC
+    IOC
+    FOK
+    POST_ONLY
+}
+
+class OrderRequest {
+    - String orderId
+    - String clientOrderId
+    - String symbol
+    - Side side
+    - OrderType type
+    - BigDecimal price
+    - BigDecimal quantity
+    - String userId
+}
+
+class CancelRequest {
+    - String orderId
+    - String clientOrderId
+    - String symbol
+}
+
+class OrderEvent {
+    - Order order
+    - String action
+}
+
+' OrderBook 相关
+class L3OrderBook {
+    - String symbol
+    - ConcurrentSkipListMap<BigDecimal, PriceLevel> bids
+    - ConcurrentSkipListMap<BigDecimal, PriceLevel> asks
+    - ConcurrentHashMap<String, OrderEntry> orderIndex
+    - AtomicLong seq
+    - boolean fiveLevelProtection
+    + processOrder(Order): List<Trade>
+    + cancelOrder(String orderId): boolean
+    + getDepth(int): List<DepthLevel>
+    + getBidsForSnapshot()
+    + getAsksForSnapshot()
+}
+
+class PriceLevel {
+    - TreeMap<Long, OrderEntry> orders
+    - BigDecimal totalQty
+}
+
+class OrderEntry {
+    - Order order
+    - long ts
+    - BigDecimal price
+    - BigDecimal remain
+    - PriceLevel level
+}
+
+class DepthLevel {
+    - BigDecimal price
+    - BigDecimal quantity
+}
+
+' 匹配引擎
+class MatchingEngine {
+    - String symbol
+    - L3OrderBook orderBook
+    - OrderBookPersistence persistence
+    - MarketDataPublisher publisher
+    + submitOrder(Order): List<Trade>
+    + cancelOrder(String orderId): boolean
+    + cancelOrderByClientOrderId(String clientOrderId): boolean
+    + getDepth(int): List<DepthLevel>
+}
+
+class MatchingEngineManager {
+    - ConcurrentHashMap<String, MatchingEngine> engines
+    + static getEngine(String symbol): MatchingEngine
+}
+
+' 持久化
+class OrderBookPersistence {
+    - L3OrderBook orderBook
+    - FileChannel snapshotChannel
+    - MappedByteBuffer snapshotBuffer
+    - WalWriter walWriter
+    + appendOrderSubmit(Order)
+    + appendOrderCancel(String)
+    + appendTrade(Trade)
+    + takeSnapshot()
+    + recoverIfPossible()
+}
+
+class WalRecord {
+    - WalType type
+    - long sequence
+    - long timestamp
+    - String orderId
+    - String clientOrderId
+    - String symbol
+    - Side side
+    - OrderType orderType
+    - BigDecimal price
+    - BigDecimal quantity
+    - String userId
+    - String buyOrderId
+    - String sellOrderId
+    - BigDecimal tradePrice
+    - BigDecimal tradeQuantity
+    + serialize(): String
+    + static deserialize(String): WalRecord
+    + static createOrderSubmit(Order): WalRecord
+    + static createTrade(Trade): WalRecord
+    + static createOrderCancel(...): WalRecord
+}
+
+enum WalType {
+    ORDER_SUBMIT
+    ORDER_CANCEL
+    TRADE
+    SNAPSHOT
+}
+
+class WalWriter {
+    - RandomAccessFile raf
+    - long sequence
+    + appendOrderSubmit(WalRecord)
+    + appendOrderCancel(WalRecord)
+    + appendTrade(WalRecord)
+    + readAllRecords(): List<WalRecord>
+    + readRecordsAfterSnapshot(): List<WalRecord>
+    + truncate()
+    + close()
+}
+
+' 索引
+class ClientOrderIndex {
+    - ConcurrentHashMap<String, String> clientIndex
+    - ConcurrentHashMap<String, String> reverseIndex
+    + put(String, String, String)
+    + getOrderId(String, String): String
+    + getClientOrderId(String): String
+    + remove(String)
+    + removeByClientOrderId(String, String)
+    + clear()
+}
+
+' Disruptor 相关
+class OrderEventProducer {
+    - Disruptor<OrderEvent>[] disruptors
+    + publish(OrderEvent)
+}
+
+class OrderEventHandler {
+    - static ClientOrderIndex clientOrderIndex
+    + onEvent(OrderEvent, long, boolean)
+    + static getClientOrderIndex(): ClientOrderIndex
+}
+
+class MarketDataPublisher {
+    - Disruptor<MarketDataEvent> marketDisruptor
+    + publishUpdate(String, BigDecimal, BigDecimal, boolean)
+}
+
+' 关系
+OrderRequest ..> Order : 转换为
+CancelRequest ..> Order : 转换为
+OrderEvent *-- Order
+L3OrderBook *-- OrderEntry
+PriceLevel *-- OrderEntry
+L3OrderBook --> DepthLevel : 返回
+MatchingEngine *-- L3OrderBook
+MatchingEngine *-- OrderBookPersistence
+OrderBookPersistence *-- WalWriter
+WalRecord --> Side
+WalRecord --> OrderType
+Trade *-- Side
+
+OrderEventProducer ..> OrderEvent : 发布
+OrderEventProducer ..> Disruptor : 使用
+Disruptor ..> OrderEventHandler : 触发
+OrderEventHandler ..> MatchingEngine : 调用
+OrderEventHandler ..> ClientOrderIndex : 维护
+OrderEventHandler ..> WalWriter : 写入
+
+@enduml

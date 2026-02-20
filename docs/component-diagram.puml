@@ -1,0 +1,86 @@
+@startuml Component Diagram
+title 撮合引擎组件架构
+
+package "API Layer" {
+    [OrderController\n\nREST API\n/order, /cancel] as Controller
+    [MarketDataWebSocketHandler\n\nWebSocket 深度推送] as WSHandler
+}
+
+package "Event Layer" {
+    [OrderEvent\n\n订单事件] as OrderEvent
+    [OrderEventProducer\n\n事件生产者] as Producer
+    [Disruptor\n\n多分片环形缓冲区\n(Shard-Count: 2)\nBuffer-Size: 131072] as Disruptor
+    [OrderEventHandler\n\n事件消费者] as Handler
+}
+
+package "Core Engine" {
+    [MatchingEngineManager\n\n引擎管理器\n按 symbol 创建引擎] as Manager
+    [MatchingEngine\n\n单交易对撮合引擎] as Engine
+    [L3OrderBook\n\n三级订单簿\n价格-时间优先] as OrderBook
+}
+
+package "Persistence Layer" {
+    [ClientOrderIndex\n\nclientOrderId 映射\nConcurrentHashMap] as Index
+    [OrderBookPersistence\n\n持久化管理器] as Persistence
+    [WalWriter\n\n写前日志\nWAL 记录] as WAL
+    [Snapshot\n\n全量快照\n每10秒] as Snapshot
+}
+
+package "Market Data" {
+    [MarketDataPublisher\n\n深度发布器] as Publisher
+    [MarketDataDisruptor\n\n行情事件队列] as MDQueue
+    [DepthBatcher\n\n深度批处理器] as Batcher
+}
+
+' 关系
+Controller --> Producer
+WSHandler --> MDQueue
+
+Producer --> Disruptor
+Disruptor --> Handler
+
+Handler --> Manager
+Manager --> Engine
+Engine --> OrderBook
+Engine --> Persistence
+
+Handler --> Index
+Persistence --> WAL
+Persistence --> Snapshot
+
+OrderBook --> Publisher
+Publisher --> MDQueue
+MDQueue --> Batcher
+
+' 跨层关系
+Handler ..> WAL : 写入订单/成交/撤单
+Handler ..> Index : 维护映射关系
+Engine ..> WAL : 通过 Persistence 访问
+
+note right of Disruptor
+  无锁设计
+  BusySpinWaitStrategy
+  最低延迟
+end note
+
+note left of OrderBook
+  ConcurrentSkipListMap
+  买单降序
+  卖单升序
+end note
+
+note right of WAL
+  四种记录类型：
+  - ORDER_SUBMIT
+  - ORDER_CANCEL
+  - TRADE
+  - SNAPSHOT
+end note
+
+note bottom of Snapshot
+  MappedByteBuffer
+  100MB 快照文件
+  fsync 强制刷盘
+end note
+
+@enduml
