@@ -16,6 +16,7 @@ import java.util.List;
 public class WalWriter {
     private final String walFile;
     private final RandomAccessFile raf;
+    private final Object ioLock = new Object();
     private volatile long sequence = 0;
 
     public WalWriter(String walFile) {
@@ -27,6 +28,8 @@ public class WalWriter {
             // 读取当前 sequence 值（从最后一行提取）
             long currentSeq = readLastSequence();
             this.sequence = currentSeq;
+            // 确保重启后继续追加，而不是覆盖文件头
+            raf.seek(raf.length());
 
             log.info("WAL initialized: file={}, currentSequence={}", walFile, sequence);
         } catch (IOException e) {
@@ -67,16 +70,18 @@ public class WalWriter {
      * 通用写入方法
      */
     private void append(WalRecord record) {
-        try {
-            record.setSequence(++sequence);
-            String entry = record.serialize() + "\n";
-            raf.write(entry.getBytes());
-            raf.getFD().sync();  // 强制刷盘，保证持久化
+        synchronized (ioLock) {
+            try {
+                record.setSequence(++sequence);
+                String entry = record.serialize() + "\n";
+                raf.write(entry.getBytes());
+                raf.getFD().sync();  // 强制刷盘，保证持久化
 
-            log.debug("WAL append: type={}, sequence={}", record.getType(), record.getSequence());
-        } catch (IOException e) {
-            log.error("Failed to append WAL record", e);
-            throw new RuntimeException("WAL append failed", e);
+                log.debug("WAL append: type={}, sequence={}", record.getType(), record.getSequence());
+            } catch (IOException e) {
+                log.error("Failed to append WAL record", e);
+                throw new RuntimeException("WAL append failed", e);
+            }
         }
     }
 
@@ -106,6 +111,8 @@ public class WalWriter {
     public List<WalRecord> readRecordsAfterSnapshot() {
         List<WalRecord> records = new ArrayList<>();
         boolean afterSnapshot = false;
+        boolean hasSnapshotMarker = false;
+        List<WalRecord> allRecords = new ArrayList<>();
 
         try (BufferedReader br = new BufferedReader(new FileReader(walFile))) {
             String line;
@@ -117,15 +124,21 @@ public class WalWriter {
 
                 if (record.getType() == WalRecord.WalType.SNAPSHOT) {
                     afterSnapshot = true;
+                    hasSnapshotMarker = true;
                     log.info("Found snapshot marker at sequence={}", record.getSequence());
                     continue;
                 }
 
+                allRecords.add(record);
                 if (afterSnapshot) {
                     records.add(record);
                 }
             }
 
+            if (!hasSnapshotMarker) {
+                log.info("No snapshot marker found, fallback to all {} WAL records", allRecords.size());
+                return allRecords;
+            }
             log.info("Read {} WAL records after snapshot marker", records.size());
         } catch (IOException e) {
             log.error("Failed to read WAL records after snapshot", e);
@@ -137,14 +150,13 @@ public class WalWriter {
      * 截断 WAL（快照完成后调用）
      */
     public void truncate() throws IOException {
-        // 写入快照标记
-        appendSnapshotMarker();
-
-        // 重置文件
-        raf.setLength(0);
-        raf.seek(0);
-        sequence = 0;
-        log.info("WAL truncated: {}", walFile);
+        synchronized (ioLock) {
+            // 快照已经落盘，直接清空 WAL，只保留快照之后的增量记录。
+            raf.setLength(0);
+            raf.seek(0);
+            sequence = 0;
+            log.info("WAL truncated: {}", walFile);
+        }
     }
 
     /**
@@ -170,8 +182,10 @@ public class WalWriter {
      * 关闭 WAL
      */
     public void close() throws IOException {
-        if (raf != null) {
-            raf.close();
+        synchronized (ioLock) {
+            if (raf != null) {
+                raf.close();
+            }
         }
     }
 

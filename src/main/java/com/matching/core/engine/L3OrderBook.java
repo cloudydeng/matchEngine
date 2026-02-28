@@ -2,6 +2,7 @@
 package com.matching.core.engine;
 
 import com.matching.core.domain.*;
+import com.matching.disruptor.OrderEventHandler;
 import com.matching.disruptor.MarketDataPublisher;
 import lombok.extern.slf4j.Slf4j;
 
@@ -58,6 +59,158 @@ public final class L3OrderBook {
             this.price = order.getPrice();
             this.remain = order.getQuantity();
         }
+    }
+
+    public static class SnapshotOrder {
+        public final String orderId;
+        public final String clientOrderId;
+        public final String userId;
+        public final Side side;
+        public final OrderType type;
+        public final BigDecimal price;
+        public final BigDecimal remain;
+        public final long timestamp;
+
+        public SnapshotOrder(String orderId, String clientOrderId, String userId, Side side, OrderType type,
+                             BigDecimal price, BigDecimal remain, long timestamp) {
+            this.orderId = orderId;
+            this.clientOrderId = clientOrderId;
+            this.userId = userId;
+            this.side = side;
+            this.type = type;
+            this.price = price;
+            this.remain = remain;
+            this.timestamp = timestamp;
+        }
+    }
+
+    public synchronized void restoreFromSnapshot(List<Map.Entry<BigDecimal, BigDecimal>> bidLevels,
+                                                 List<Map.Entry<BigDecimal, BigDecimal>> askLevels) {
+        bids.clear();
+        asks.clear();
+        orderIndex.clear();
+
+        if (bidLevels != null) {
+            for (Map.Entry<BigDecimal, BigDecimal> level : bidLevels) {
+                addSnapshotLevel(Side.BUY, level.getKey(), level.getValue());
+            }
+        }
+        if (askLevels != null) {
+            for (Map.Entry<BigDecimal, BigDecimal> level : askLevels) {
+                addSnapshotLevel(Side.SELL, level.getKey(), level.getValue());
+            }
+        }
+        log.info("OrderBook restored from snapshot: symbol={}, bidLevels={}, askLevels={}",
+                symbol, bidLevels != null ? bidLevels.size() : 0, askLevels != null ? askLevels.size() : 0);
+    }
+
+    public synchronized void restoreFromSnapshotOrders(List<SnapshotOrder> snapshotOrders) {
+        bids.clear();
+        asks.clear();
+        orderIndex.clear();
+
+        if (snapshotOrders == null) {
+            return;
+        }
+
+        for (SnapshotOrder so : snapshotOrders) {
+            if (so == null || so.price == null || so.remain == null || so.remain.signum() <= 0) {
+                continue;
+            }
+            ConcurrentSkipListMap<BigDecimal, PriceLevel> book = so.side == Side.BUY ? bids : asks;
+            PriceLevel level = book.computeIfAbsent(so.price, k -> new PriceLevel());
+
+            Order order = new Order();
+            order.setOrderId(so.orderId);
+            order.setClientOrderId(so.clientOrderId);
+            order.setUserId(so.userId);
+            order.setSymbol(symbol);
+            order.setSide(so.side);
+            order.setType(so.type != null ? so.type : OrderType.LIMIT);
+            order.setPrice(so.price);
+            order.setQuantity(so.remain);
+            order.setTimestamp(so.timestamp);
+
+            long ts = so.timestamp > 0 ? so.timestamp : System.nanoTime();
+            while (level.orders.containsKey(ts)) {
+                ts++;
+            }
+
+            OrderEntry entry = new OrderEntry(order, ts);
+            entry.remain = so.remain;
+            entry.level = level;
+
+            level.orders.put(ts, entry);
+            level.totalQty = level.totalQty.add(so.remain);
+            orderIndex.put(so.orderId, entry);
+            if (so.clientOrderId != null && !so.clientOrderId.isBlank()) {
+                OrderEventHandler.getClientOrderIndex().put(symbol, so.clientOrderId, so.orderId);
+            }
+        }
+
+        log.info("OrderBook restored from order snapshot: symbol={}, orders={}",
+                symbol, snapshotOrders.size());
+    }
+
+    public synchronized List<SnapshotOrder> getOrdersForSnapshot() {
+        List<SnapshotOrder> result = new ArrayList<>(orderIndex.size());
+        for (OrderEntry entry : orderIndex.values()) {
+            if (entry == null || entry.remain == null || entry.remain.signum() <= 0) {
+                continue;
+            }
+            result.add(new SnapshotOrder(
+                    entry.order.getOrderId(),
+                    entry.order.getClientOrderId(),
+                    entry.order.getUserId(),
+                    entry.order.getSide(),
+                    entry.order.getType(),
+                    entry.price,
+                    entry.remain,
+                    entry.ts
+            ));
+        }
+        return result;
+    }
+
+    public synchronized void replayOrder(Order order) {
+        if (order == null) {
+            return;
+        }
+        processOrder(order);
+    }
+
+    public synchronized boolean replayCancel(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            return false;
+        }
+        return cancelOrder(orderId);
+    }
+
+    private void addSnapshotLevel(Side side, BigDecimal price, BigDecimal qty) {
+        if (price == null || qty == null || qty.signum() <= 0) {
+            return;
+        }
+        ConcurrentSkipListMap<BigDecimal, PriceLevel> book = side == Side.BUY ? bids : asks;
+        PriceLevel level = book.computeIfAbsent(price, k -> new PriceLevel());
+
+        String syntheticOrderId = "SNAPSHOT_" + symbol + "_" + side + "_" + seq.incrementAndGet();
+        Order syntheticOrder = new Order();
+        syntheticOrder.setOrderId(syntheticOrderId);
+        syntheticOrder.setSymbol(symbol);
+        syntheticOrder.setSide(side);
+        syntheticOrder.setType(OrderType.LIMIT);
+        syntheticOrder.setPrice(price);
+        syntheticOrder.setQuantity(qty);
+        syntheticOrder.setTimestamp(System.nanoTime());
+
+        long ts = System.nanoTime();
+        OrderEntry entry = new OrderEntry(syntheticOrder, ts);
+        entry.remain = qty;
+        entry.level = level;
+
+        level.orders.put(ts, entry);
+        level.totalQty = level.totalQty.add(qty);
+        orderIndex.put(syntheticOrderId, entry);
     }
 
     public List<Trade> processOrder(Order order) {

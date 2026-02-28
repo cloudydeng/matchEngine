@@ -96,14 +96,11 @@ public class OrderBookPersistence {
     private void takeSnapshot() {
         try {
             snapshotBuffer.rewind();
-            snapshotBuffer.putInt(1); // version
+            snapshotBuffer.putInt(2); // version
             snapshotBuffer.putLong(Instant.now().toEpochMilli()); // timestamp
 
-            // 写入 bids
-            writeBookSnapshot(snapshotBuffer, orderBook.getBidsForSnapshot());
-
-            // 写入 asks
-            writeBookSnapshot(snapshotBuffer, orderBook.getAsksForSnapshot());
+            // 写入订单级快照，保留真实 orderId/clientOrderId
+            writeOrderSnapshot(snapshotBuffer, orderBook.getOrdersForSnapshot());
 
             snapshotBuffer.putLong(0xDEADBEEF); // EOF marker
             snapshotBuffer.force(); // 强制刷盘
@@ -125,10 +122,32 @@ public class OrderBookPersistence {
         }
     }
 
+    private void writeOrderSnapshot(MappedByteBuffer buf, List<L3OrderBook.SnapshotOrder> orders) {
+        buf.putInt(orders.size());
+        for (L3OrderBook.SnapshotOrder so : orders) {
+            writeNullableString(buf, so.orderId);
+            writeNullableString(buf, so.clientOrderId);
+            writeNullableString(buf, so.userId);
+            writeNullableString(buf, so.side != null ? so.side.name() : null);
+            writeNullableString(buf, so.type != null ? so.type.name() : null);
+            writeNullableString(buf, so.price != null ? so.price.toPlainString() : null);
+            writeNullableString(buf, so.remain != null ? so.remain.toPlainString() : null);
+            buf.putLong(so.timestamp);
+        }
+    }
+
     private void writeString(MappedByteBuffer buf, String s) {
         byte[] bytes = s.getBytes();
         buf.putInt(bytes.length);
         buf.put(bytes);
+    }
+
+    private void writeNullableString(MappedByteBuffer buf, String s) {
+        if (s == null) {
+            buf.putInt(-1);
+            return;
+        }
+        writeString(buf, s);
     }
 
     /**
@@ -143,7 +162,7 @@ public class OrderBookPersistence {
 
         snapshotBuffer.rewind();
         int version = snapshotBuffer.getInt();
-        if (version != 1) {
+        if (version != 1 && version != 2) {
             log.warn("Unknown snapshot version: {}", version);
             return data;
         }
@@ -152,20 +171,48 @@ public class OrderBookPersistence {
         data.timestamp = Instant.ofEpochMilli(ts);
         log.info("[{}] Loading snapshot from {}", symbol, data.timestamp);
 
-        // 读取 bids
-        int bidCount = snapshotBuffer.getInt();
-        for (int i = 0; i < bidCount; i++) {
-            String priceStr = readString(snapshotBuffer);
-            String qtyStr = readString(snapshotBuffer);
-            data.bids.add(Map.entry(new BigDecimal(priceStr), new BigDecimal(qtyStr)));
-        }
+        if (version == 1) {
+            // 旧版：仅读深度聚合
+            int bidCount = snapshotBuffer.getInt();
+            for (int i = 0; i < bidCount; i++) {
+                String priceStr = readString(snapshotBuffer);
+                String qtyStr = readString(snapshotBuffer);
+                data.bids.add(Map.entry(new BigDecimal(priceStr), new BigDecimal(qtyStr)));
+            }
 
-        // 读取 asks
-        int askCount = snapshotBuffer.getInt();
-        for (int i = 0; i < askCount; i++) {
-            String priceStr = readString(snapshotBuffer);
-            String qtyStr = readString(snapshotBuffer);
-            data.asks.add(Map.entry(new BigDecimal(priceStr), new BigDecimal(qtyStr)));
+            int askCount = snapshotBuffer.getInt();
+            for (int i = 0; i < askCount; i++) {
+                String priceStr = readString(snapshotBuffer);
+                String qtyStr = readString(snapshotBuffer);
+                data.asks.add(Map.entry(new BigDecimal(priceStr), new BigDecimal(qtyStr)));
+            }
+        } else {
+            // 新版：订单级快照
+            int orderCount = snapshotBuffer.getInt();
+            for (int i = 0; i < orderCount; i++) {
+                String orderId = readNullableString(snapshotBuffer);
+                String clientOrderId = readNullableString(snapshotBuffer);
+                String userId = readNullableString(snapshotBuffer);
+                String sideName = readNullableString(snapshotBuffer);
+                String typeName = readNullableString(snapshotBuffer);
+                String priceStr = readNullableString(snapshotBuffer);
+                String remainStr = readNullableString(snapshotBuffer);
+                long ts = snapshotBuffer.getLong();
+
+                if (orderId == null || sideName == null || priceStr == null || remainStr == null) {
+                    continue;
+                }
+                data.orders.add(new L3OrderBook.SnapshotOrder(
+                        orderId,
+                        clientOrderId,
+                        userId,
+                        Side.valueOf(sideName),
+                        typeName != null ? OrderType.valueOf(typeName) : OrderType.LIMIT,
+                        new BigDecimal(priceStr),
+                        new BigDecimal(remainStr),
+                        ts
+                ));
+            }
         }
 
         // 验证 EOF marker
@@ -184,6 +231,16 @@ public class OrderBookPersistence {
         return new String(bytes);
     }
 
+    private String readNullableString(MappedByteBuffer buf) throws IOException {
+        int len = buf.getInt();
+        if (len < 0) {
+            return null;
+        }
+        byte[] bytes = new byte[len];
+        buf.get(bytes);
+        return new String(bytes);
+    }
+
     private void truncateWalAfterSnapshot() throws IOException {
         walWriter.truncate();
     }
@@ -196,11 +253,16 @@ public class OrderBookPersistence {
             // 1. 先加载最新快照
             SnapshotData snapshot = loadSnapshot();
 
-            // 恢复快照中的订单簿（需要 L3OrderBook 提供恢复方法）
-            // 这里只是演示，实际需要调用 orderBook.restoreFromSnapshot(snapshot)
+            // 2. 用快照重建 L3 深度
+            if (!snapshot.orders.isEmpty()) {
+                orderBook.restoreFromSnapshotOrders(snapshot.orders);
+            } else {
+                // 兼容老快照格式
+                orderBook.restoreFromSnapshot(snapshot.bids, snapshot.asks);
+            }
 
-            // 2. 再重放 WAL（从快照时间点之后）
-            replayWalAfterSnapshot();
+            // 3. 再重放 WAL 增量
+            replayWalIncremental();
 
             log.info("[{}] Recovery completed", symbol);
         } catch (Exception e) {
@@ -211,8 +273,9 @@ public class OrderBookPersistence {
     /**
      * 重放 WAL 中快照标记之后的记录
      */
-    private void replayWalAfterSnapshot() {
-        List<WalRecord> records = walWriter.readRecordsAfterSnapshot();
+    private void replayWalIncremental() {
+        // 在当前截断策略下，WAL 仅保留快照之后的增量记录。
+        List<WalRecord> records = walWriter.readAllRecords();
 
         for (WalRecord record : records) {
             try {
@@ -221,17 +284,17 @@ public class OrderBookPersistence {
                         Order order = record.toOrder();
                         if (order != null) {
                             log.debug("Replay order: {}", order.getOrderId());
-                            // orderBook.replayOrder(order);
+                            orderBook.replayOrder(order);
                         }
                         break;
                     case ORDER_CANCEL:
                         log.debug("Replay cancel: {}", record.getOrderId());
-                        // orderBook.replayCancel(record.getOrderId());
+                        orderBook.replayCancel(record.getOrderId());
                         break;
                     case TRADE:
                         log.debug("Replay trade: {} @ {}",
                                 record.getTradeQuantity(), record.getTradePrice());
-                        // orderBook.replayTrade(record);
+                        // 由 submit/cancel 回放重建订单簿，TRADE 仅作为审计日志，不直接作用于簿状态。
                         break;
                     case SNAPSHOT:
                         // 忽略快照标记
@@ -260,5 +323,6 @@ public class OrderBookPersistence {
         Instant timestamp;
         List<Map.Entry<BigDecimal, BigDecimal>> bids = new java.util.ArrayList<>();
         List<Map.Entry<BigDecimal, BigDecimal>> asks = new java.util.ArrayList<>();
+        List<L3OrderBook.SnapshotOrder> orders = new java.util.ArrayList<>();
     }
 }

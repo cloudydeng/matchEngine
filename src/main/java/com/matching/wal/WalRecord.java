@@ -108,17 +108,19 @@ public class WalRecord {
     public String serialize() {
         switch (type) {
             case ORDER_SUBMIT:
-                return String.format("ORDER_SUBMIT|%d|%s|%s|%s|%s|%s|%s|%s|%s",
-                        timestamp, orderId, clientOrderId, symbol, side,
-                        orderType, price, quantity, userId);
+                return String.format("ORDER_SUBMIT|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s",
+                        sequence, timestamp, encodeNullable(orderId), encodeNullable(clientOrderId),
+                        encodeNullable(symbol), encodeNullable(side), encodeNullable(orderType),
+                        encodeNullable(price), encodeNullable(quantity), encodeNullable(userId));
             case ORDER_CANCEL:
-                return String.format("ORDER_CANCEL|%d|%s|%s",
-                        timestamp, orderId, symbol);
+                return String.format("ORDER_CANCEL|%d|%d|%s|%s",
+                        sequence, timestamp, encodeNullable(orderId), encodeNullable(symbol));
             case TRADE:
-                return String.format("TRADE|%d|%s|%s|%s|%s|%s",
-                        timestamp, symbol, buyOrderId, sellOrderId, tradePrice, tradeQuantity);
+                return String.format("TRADE|%d|%d|%s|%s|%s|%s|%s",
+                        sequence, timestamp, encodeNullable(symbol), encodeNullable(buyOrderId),
+                        encodeNullable(sellOrderId), encodeNullable(tradePrice), encodeNullable(tradeQuantity));
             case SNAPSHOT:
-                return String.format("SNAPSHOT|%d", timestamp);
+                return String.format("SNAPSHOT|%d|%d", sequence, timestamp);
             default:
                 return "";
         }
@@ -152,37 +154,70 @@ public class WalRecord {
         try {
             switch (type) {
                 case ORDER_SUBMIT:
-                    if (parts.length >= 10) {
+                    if (parts.length >= 11) {
+                        record.sequence = Long.parseLong(parts[1]);
+                        record.timestamp = Long.parseLong(parts[2]);
+                        record.orderId = decodeNullable(parts[3]);
+                        record.clientOrderId = decodeNullable(parts[4]);
+                        record.symbol = decodeNullable(parts[5]);
+                        String sideValue = decodeNullable(parts[6]);
+                        record.side = sideValue != null ? Side.valueOf(sideValue) : null;
+                        record.orderType = decodeNullable(parts[7]) != null
+                                ? OrderType.valueOf(parts[7]) : null;
+                        record.price = decodeNullable(parts[8]) != null ? new BigDecimal(parts[8]) : null;
+                        record.quantity = decodeNullable(parts[9]) != null ? new BigDecimal(parts[9]) : null;
+                        record.userId = decodeNullable(parts[10]);
+                    } else if (parts.length >= 10) { // backward-compatible: no sequence
+                        record.sequence = 0;
                         record.timestamp = Long.parseLong(parts[1]);
-                        record.orderId = parts[2];
-                        record.clientOrderId = parts[3].isEmpty() ? null : parts[3];
-                        record.symbol = parts[4];
-                        record.side = Side.valueOf(parts[5]);
-                        record.orderType = OrderType.valueOf(parts[6]);
-                        record.price = new BigDecimal(parts[7]);
-                        record.quantity = new BigDecimal(parts[8]);
-                        record.userId = parts[9];
+                        record.orderId = decodeNullable(parts[2]);
+                        record.clientOrderId = decodeNullable(parts[3]);
+                        record.symbol = decodeNullable(parts[4]);
+                        record.side = decodeNullable(parts[5]) != null ? Side.valueOf(parts[5]) : null;
+                        record.orderType = decodeNullable(parts[6]) != null ? OrderType.valueOf(parts[6]) : null;
+                        record.price = decodeNullable(parts[7]) != null ? new BigDecimal(parts[7]) : null;
+                        record.quantity = decodeNullable(parts[8]) != null ? new BigDecimal(parts[8]) : null;
+                        record.userId = decodeNullable(parts[9]);
                     }
                     break;
                 case ORDER_CANCEL:
-                    if (parts.length >= 4) {
+                    if (parts.length >= 5) {
+                        record.sequence = Long.parseLong(parts[1]);
+                        record.timestamp = Long.parseLong(parts[2]);
+                        record.orderId = decodeNullable(parts[3]);
+                        record.symbol = decodeNullable(parts[4]);
+                    } else if (parts.length >= 4) { // backward-compatible: no sequence
+                        record.sequence = 0;
                         record.timestamp = Long.parseLong(parts[1]);
-                        record.orderId = parts[2];
-                        record.symbol = parts[3];
+                        record.orderId = decodeNullable(parts[2]);
+                        record.symbol = decodeNullable(parts[3]);
                     }
                     break;
                 case TRADE:
-                    if (parts.length >= 7) {
+                    if (parts.length >= 8) {
+                        record.sequence = Long.parseLong(parts[1]);
+                        record.timestamp = Long.parseLong(parts[2]);
+                        record.symbol = decodeNullable(parts[3]);
+                        record.buyOrderId = decodeNullable(parts[4]);
+                        record.sellOrderId = decodeNullable(parts[5]);
+                        record.tradePrice = decodeNullable(parts[6]) != null ? new BigDecimal(parts[6]) : null;
+                        record.tradeQuantity = decodeNullable(parts[7]) != null ? new BigDecimal(parts[7]) : null;
+                    } else if (parts.length >= 7) { // backward-compatible: no sequence
+                        record.sequence = 0;
                         record.timestamp = Long.parseLong(parts[1]);
-                        record.symbol = parts[2];
-                        record.buyOrderId = parts[3];
-                        record.sellOrderId = parts[4];
-                        record.tradePrice = new BigDecimal(parts[5]);
-                        record.tradeQuantity = new BigDecimal(parts[6]);
+                        record.symbol = decodeNullable(parts[2]);
+                        record.buyOrderId = decodeNullable(parts[3]);
+                        record.sellOrderId = decodeNullable(parts[4]);
+                        record.tradePrice = decodeNullable(parts[5]) != null ? new BigDecimal(parts[5]) : null;
+                        record.tradeQuantity = decodeNullable(parts[6]) != null ? new BigDecimal(parts[6]) : null;
                     }
                     break;
                 case SNAPSHOT:
-                    if (parts.length >= 2) {
+                    if (parts.length >= 3) {
+                        record.sequence = Long.parseLong(parts[1]);
+                        record.timestamp = Long.parseLong(parts[2]);
+                    } else if (parts.length >= 2) { // backward-compatible: no sequence
+                        record.sequence = 0;
                         record.timestamp = Long.parseLong(parts[1]);
                     }
                     break;
@@ -213,5 +248,16 @@ public class WalRecord {
         order.setQuantity(quantity);
         order.setUserId(userId);
         return order;
+    }
+
+    private static String encodeNullable(Object value) {
+        return value == null ? "" : value.toString();
+    }
+
+    private static String decodeNullable(String value) {
+        if (value == null || value.isEmpty() || "null".equalsIgnoreCase(value)) {
+            return null;
+        }
+        return value;
     }
 }
