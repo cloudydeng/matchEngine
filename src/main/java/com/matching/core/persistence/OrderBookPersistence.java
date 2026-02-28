@@ -197,7 +197,7 @@ public class OrderBookPersistence {
                 String typeName = readNullableString(snapshotBuffer);
                 String priceStr = readNullableString(snapshotBuffer);
                 String remainStr = readNullableString(snapshotBuffer);
-                long ts = snapshotBuffer.getLong();
+                long orderTs = snapshotBuffer.getLong();
 
                 if (orderId == null || sideName == null || priceStr == null || remainStr == null) {
                     continue;
@@ -210,7 +210,7 @@ public class OrderBookPersistence {
                         typeName != null ? OrderType.valueOf(typeName) : OrderType.LIMIT,
                         new BigDecimal(priceStr),
                         new BigDecimal(remainStr),
-                        ts
+                        orderTs
                 ));
             }
         }

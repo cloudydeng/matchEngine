@@ -30,9 +30,3 @@ risk:
   btcusdt:
     min-price: 1000         # 最小价格
     max-price: 1000000      # 最大价格
-
-# Opinion API 配置
-opinion:
-  api:
-    base: https://proxy.opinion.trade:8443/openapi
-    key: ${OPINION_API_KEY:}
