@@ -85,6 +85,9 @@ public class OrderEventHandler implements EventHandler<OrderEvent> {
                 for (Trade trade : trades) {
                     engine.getPersistence().appendTrade(trade);
                     BigDecimal fillAmount = trade.getPrice().multiply(trade.getQuantity());
+                    log.info("Trade executed: symbol={}, tradeId={}, price={}, qty={}, buyOrderId={}, sellOrderId={}",
+                            trade.getSymbol(), trade.getTradeId(), trade.getPrice(), trade.getQuantity(),
+                            trade.getBuyOrderId(), trade.getSellOrderId());
 
                     // 扣款（成交后）
                     if (freezeService != null) {
@@ -109,7 +112,7 @@ public class OrderEventHandler implements EventHandler<OrderEvent> {
             //7. 更新风控统计（订单提交成功）
             riskManager.onOrderSubmitted(event.getOrder());
 
-            log.debug("Order submitted: {}, trades: {}", event.getOrder().getOrderId(),
+            log.info("Order submitted: {}, trades: {}", event.getOrder().getOrderId(),
                     trades != null ? trades.size() : 0);
 
         } else if ("CANCEL".equals(event.getAction())) {
