@@ -9,8 +9,9 @@ import com.matching.core.engine.MatchingEngineManager;
 import com.matching.core.index.ClientOrderIndex;
 import com.matching.core.risk.RiskCheckResult;
 import com.matching.core.risk.RiskManager;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -20,16 +21,16 @@ import java.util.List;
  * 处理订单提交、取消，集成风控和冻结，并记录到 WAL
  */
 @Slf4j
+@RequiredArgsConstructor
 public class OrderEventHandler implements EventHandler<OrderEvent> {
 
     // 全局 ClientOrderIndex 单例
     private static final ClientOrderIndex clientOrderIndex = new ClientOrderIndex();
 
-    @Autowired
-    private RiskManager riskManager;
+    private final RiskManager riskManager;
 
-    @Autowired(required = false)
-    private FreezeService freezeService;  // 账户冻结服务
+    @Nullable
+    private final FreezeService freezeService;  // 账户冻结服务
 
     @Override
     public void onEvent(OrderEvent event, long sequence, boolean endOfBatch) throws Exception {
@@ -83,10 +84,10 @@ public class OrderEventHandler implements EventHandler<OrderEvent> {
             if (trades != null) {
                 for (Trade trade : trades) {
                     engine.getPersistence().appendTrade(trade);
+                    BigDecimal fillAmount = trade.getPrice().multiply(trade.getQuantity());
 
                     // 扣款（成交后）
                     if (freezeService != null) {
-                        BigDecimal fillAmount = trade.getPrice().multiply(trade.getQuantity());
                         freezeService.deduct(trade.getBuyOrderId(), fillAmount);
                         freezeService.deduct(trade.getSellOrderId(), fillAmount);
                     }
@@ -163,7 +164,7 @@ public class OrderEventHandler implements EventHandler<OrderEvent> {
     private String getSettlementCurrency(Order order) {
         // 简化处理：假设交易对格式为 XXXUSDT
         String symbol = order.getSymbol();
-        if (symbol != null) {
+        if (symbol == null || symbol.isBlank()) {
             return "USDT";  // 默认
         }
         // 提取 USDT 部分

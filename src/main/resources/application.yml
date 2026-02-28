@@ -35,4 +35,4 @@ risk:
 opinion:
   api:
     base: https://proxy.opinion.trade:8443/openapi
-    key: M6IL72onrUqGcwKhkHaMRknpVs9OJPvx
+    key: ${OPINION_API_KEY:}

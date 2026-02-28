@@ -2,6 +2,7 @@ package com.matching.core.risk;
 
 import com.matching.core.domain.Order;
 import com.matching.core.domain.OrderType;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -37,7 +38,8 @@ public class PriceRangeChecker implements RiskChecker {
     // 各交易对的价格范围配置
     private final Map<String, PriceRange> priceRanges = new ConcurrentHashMap<>();
 
-    public PriceRangeChecker() {
+    @PostConstruct
+    public void initPriceRanges() {
         // 初始化 BTCUSDT 价格范围
         priceRanges.put("BTCUSDT", new PriceRange(btcMinPrice, btcMaxPrice));
     }

@@ -3,7 +3,6 @@ package com.matching.config;
 import com.lmax.disruptor.YieldingWaitStrategy;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
-import com.matching.api.MarketDataWebSocketHandler;
 import com.matching.disruptor.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
@@ -13,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
 @RequiredArgsConstructor
 public class MarketDataDisruptorConfig {
 
-    private final MarketDataWebSocketHandler wsHandler;
+    private final DepthBatcher depthBatcher;
 
     @Bean
     public Disruptor<MarketDataEvent> marketDataDisruptor() {
@@ -25,7 +24,7 @@ public class MarketDataDisruptorConfig {
                 new YieldingWaitStrategy()
         );
 
-        disruptor.handleEventsWith(new DepthBatcher(wsHandler));
+        disruptor.handleEventsWith(depthBatcher);
         disruptor.start();
         return disruptor;
     }

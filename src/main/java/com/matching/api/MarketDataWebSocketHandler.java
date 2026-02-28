@@ -1,36 +1,39 @@
 package com.matching.api;
 
-import jakarta.websocket.OnClose;
-import jakarta.websocket.OnOpen;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.NavigableMap;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Slf4j
-public class MarketDataWebSocketHandler {
+public class MarketDataWebSocketHandler extends TextWebSocketHandler {
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
 
-    @OnOpen
-    public void onOpen(WebSocketSession session) { sessions.add(session); }
+    @Override
+    public void afterConnectionEstablished(WebSocketSession session) {
+        sessions.add(session);
+    }
 
-    @OnClose
-    public void onClose(WebSocketSession session) { sessions.remove(session); }
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status) {
+        sessions.remove(session);
+    }
 
     public void broadcast(String symbol,
-                          TreeMap<BigDecimal, BigDecimal> bids,   // 降序
-                          TreeMap<BigDecimal, BigDecimal> asks,   // 升序
+                          NavigableMap<BigDecimal, BigDecimal> bids,   // 降序
+                          NavigableMap<BigDecimal, BigDecimal> asks,   // 升序
                           int levels) {
         String json = buildDepthJson(symbol, bids, asks, levels);
         TextMessage message = new TextMessage(json);
-        log.info("websocket push message {}",json);
+        log.debug("websocket push message {}", json);
         sessions.parallelStream().forEach(session -> {
             try {
                 if (session.isOpen()) {
@@ -43,8 +46,8 @@ public class MarketDataWebSocketHandler {
     }
 
     private String buildDepthJson(String symbol,
-                                  TreeMap<BigDecimal, BigDecimal> bids,
-                                  TreeMap<BigDecimal, BigDecimal> asks,
+                                  NavigableMap<BigDecimal, BigDecimal> bids,
+                                  NavigableMap<BigDecimal, BigDecimal> asks,
                                   int levels) {
         StringBuilder sb = new StringBuilder(2048);
         sb.append("{\"symbol\":\"").append(symbol)

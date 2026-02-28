@@ -1,6 +1,7 @@
 package com.matching.core.risk;
 
 import com.matching.core.domain.Order;
+import com.matching.core.domain.OrderType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -50,12 +51,17 @@ public class OrderAmountLimitChecker implements RiskChecker {
             return RiskCheckResult.rejected("挂单数量超限", RiskErrorCode.TOO_MANY_OPEN_ORDERS);
         }
 
-        // 2. 检查单笔金额限制
-        BigDecimal orderAmount = order.getPrice().multiply(order.getQuantity());
-        if (orderAmount.compareTo(maxOrderAmount) > 0) {
-            log.warn("Order amount too large: userId={}, amount={}, limit={}",
-                    order.getUserId(), orderAmount, maxOrderAmount);
-            return RiskCheckResult.rejected("单笔金额超限", RiskErrorCode.ORDER_AMOUNT_TOO_LARGE);
+        // 2. 检查单笔金额限制（市价单价格未知，跳过该项）
+        if (order.getType() == OrderType.LIMIT) {
+            if (order.getPrice() == null) {
+                return RiskCheckResult.rejected("限价单价格不能为空", RiskErrorCode.INVALID_ORDER_TYPE);
+            }
+            BigDecimal orderAmount = order.getPrice().multiply(order.getQuantity());
+            if (orderAmount.compareTo(maxOrderAmount) > 0) {
+                log.warn("Order amount too large: userId={}, amount={}, limit={}",
+                        order.getUserId(), orderAmount, maxOrderAmount);
+                return RiskCheckResult.rejected("单笔金额超限", RiskErrorCode.ORDER_AMOUNT_TOO_LARGE);
+            }
         }
 
         // 3. 检查日交易量限制（简化版，实际需要统计）

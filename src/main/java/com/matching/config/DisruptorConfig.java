@@ -7,11 +7,14 @@ import com.lmax.disruptor.dsl.ProducerType;
 import com.matching.disruptor.OrderEvent;
 import com.matching.disruptor.OrderEventHandler;
 import com.matching.disruptor.OrderEventProducer;
+import com.matching.account.FreezeService;
+import com.matching.core.risk.RiskManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 
@@ -32,7 +35,7 @@ public class DisruptorConfig {
 
 
     @Bean
-    public Disruptor<OrderEvent>[] disruptors() {
+    public Disruptor<OrderEvent>[] disruptors(RiskManager riskManager, Optional<FreezeService> freezeService) {
         @SuppressWarnings("unchecked")
         Disruptor<OrderEvent>[] disruptors = new Disruptor[shardCount];
 
@@ -42,11 +45,11 @@ public class DisruptorConfig {
                     OrderEvent.EVENT_FACTORY,
                     bufferSize,
                     threadFactory,
-                    ProducerType.SINGLE,
+                    ProducerType.MULTI,
                     new BusySpinWaitStrategy()
             );
 
-            disruptor.handleEventsWith(new OrderEventHandler());
+            disruptor.handleEventsWith(new OrderEventHandler(riskManager, freezeService.orElse(null)));
             disruptor.start();
 
             disruptors[i] = disruptor;
