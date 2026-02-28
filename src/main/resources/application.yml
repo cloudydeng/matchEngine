@@ -6,6 +6,10 @@ app:
   disruptor-buffer-size: 131072
   wal-dir: ./wal/
 
+# 资金冻结服务开关（默认关闭，便于无 Redis 依赖运行）
+freeze:
+  enabled: false
+
 # 风控配置
 risk:
   # 频率限制
