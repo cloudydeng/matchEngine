@@ -9,6 +9,7 @@ import com.matching.disruptor.OrderEventHandler;
 import com.matching.disruptor.OrderEventProducer;
 import com.matching.account.FreezeService;
 import com.matching.core.risk.RiskManager;
+import com.matching.market.KlineLogger;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -35,7 +36,9 @@ public class DisruptorConfig {
 
 
     @Bean
-    public Disruptor<OrderEvent>[] disruptors(RiskManager riskManager, Optional<FreezeService> freezeService) {
+    public Disruptor<OrderEvent>[] disruptors(RiskManager riskManager,
+                                              Optional<FreezeService> freezeService,
+                                              Optional<KlineLogger> klineLogger) {
         @SuppressWarnings("unchecked")
         Disruptor<OrderEvent>[] disruptors = new Disruptor[shardCount];
 
@@ -49,7 +52,11 @@ public class DisruptorConfig {
                     new BusySpinWaitStrategy()
             );
 
-            disruptor.handleEventsWith(new OrderEventHandler(riskManager, freezeService.orElse(null)));
+            disruptor.handleEventsWith(new OrderEventHandler(
+                    riskManager,
+                    freezeService.orElse(null),
+                    klineLogger.orElse(null)
+            ));
             disruptor.start();
 
             disruptors[i] = disruptor;

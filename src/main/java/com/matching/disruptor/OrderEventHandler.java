@@ -9,6 +9,7 @@ import com.matching.core.engine.MatchingEngineManager;
 import com.matching.core.index.ClientOrderIndex;
 import com.matching.core.risk.RiskCheckResult;
 import com.matching.core.risk.RiskManager;
+import com.matching.market.KlineLogger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.Nullable;
@@ -31,6 +32,9 @@ public class OrderEventHandler implements EventHandler<OrderEvent> {
 
     @Nullable
     private final FreezeService freezeService;  // 账户冻结服务
+
+    @Nullable
+    private final KlineLogger klineLogger;
 
     @Override
     public void onEvent(OrderEvent event, long sequence, boolean endOfBatch) throws Exception {
@@ -88,6 +92,9 @@ public class OrderEventHandler implements EventHandler<OrderEvent> {
                     log.info("Trade executed: symbol={}, tradeId={}, price={}, qty={}, buyOrderId={}, sellOrderId={}",
                             trade.getSymbol(), trade.getTradeId(), trade.getPrice(), trade.getQuantity(),
                             trade.getBuyOrderId(), trade.getSellOrderId());
+                    if (klineLogger != null) {
+                        klineLogger.onTrade(trade);
+                    }
 
                     // 扣款（成交后）
                     if (freezeService != null) {
