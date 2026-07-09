@@ -134,7 +134,7 @@ public class WalRecord {
             return null;
         }
 
-        String[] parts = line.split("\\|");
+        String[] parts = line.split("\\|", -1);
         if (parts.length == 0) {
             return null;
         }

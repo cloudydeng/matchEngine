@@ -19,7 +19,10 @@ public class OrderEventProducer {
     public void publish(OrderEvent event) {
 
         String symbol = event.getOrder().getSymbol();
-        int shardId = Math.abs(symbol.hashCode() % disruptors.length);
+        if (symbol == null || symbol.isBlank()) {
+            throw new IllegalArgumentException("symbol is required");
+        }
+        int shardId = Math.floorMod(symbol.hashCode(), disruptors.length);
         RingBuffer<OrderEvent> ringBuffer = disruptors[shardId].getRingBuffer();
         long sequence = ringBuffer.next();
         try {

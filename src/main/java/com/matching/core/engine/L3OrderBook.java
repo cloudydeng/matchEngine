@@ -213,11 +213,31 @@ public final class L3OrderBook {
         orderIndex.put(syntheticOrderId, entry);
     }
 
-    public List<Trade> processOrder(Order order) {
+    public synchronized List<Trade> processOrder(Order order) {
+        if (order == null) {
+            return List.of();
+        }
+        if (order.getSide() == null) {
+            order.setStatus(OrderStatus.REJECTED);
+            order.setRejectReason("INVALID_SIDE");
+            return List.of();
+        }
+        if (order.getType() == null || (order.getType() != OrderType.LIMIT && order.getType() != OrderType.MARKET)) {
+            order.setStatus(OrderStatus.REJECTED);
+            order.setRejectReason("UNSUPPORTED_ORDER_TYPE");
+            return List.of();
+        }
         if (order.getQuantity() == null || order.getQuantity().signum() <= 0) {
             order.setStatus(OrderStatus.REJECTED);
             order.setRejectReason("INVALID_QUANTITY");
             log.warn("Reject order {}: invalid quantity", order.getOrderId());
+            return List.of();
+        }
+        if (order.getType() == OrderType.LIMIT
+                && (order.getPrice() == null || order.getPrice().signum() <= 0)) {
+            order.setStatus(OrderStatus.REJECTED);
+            order.setRejectReason("INVALID_PRICE");
+            log.warn("Reject order {}: invalid price", order.getOrderId());
             return List.of();
         }
 
@@ -241,17 +261,16 @@ public final class L3OrderBook {
         var opposite = mo.getSide() == Side.BUY ? asks : bids;
         Side makerSide = mo.getSide() == Side.BUY ? Side.SELL : Side.BUY;
 
-        int level = 0;
+        if (fiveLevelProtection && wouldSweepMarketBeyondFiveLevels(remain, mo.getSide())) {
+            log.warn("Market order {} rejected: exceed 5 levels", mo.getOrderId());
+            mo.setStatus(OrderStatus.REJECTED);
+            mo.setRejectReason("EXCEED_FIVE_LEVELS");
+            return trades;
+        }
+
         var iter = mo.getSide() == Side.BUY ? opposite.keySet().iterator() : opposite.descendingKeySet().iterator();
 
         while (iter.hasNext() && remain.signum() > 0) {
-            if (fiveLevelProtection && ++level > MAX_LEVELS) {
-                log.warn("Market order {} rejected: exceed 5 levels", mo.getOrderId());
-                mo.setStatus(OrderStatus.REJECTED);
-                mo.setRejectReason("EXCEED_FIVE_LEVELS");
-                break;
-            }
-
             BigDecimal price = iter.next();
             PriceLevel levelData = opposite.get(price);
             if (levelData == null || levelData.orders.isEmpty()) {
@@ -290,7 +309,9 @@ public final class L3OrderBook {
             }
         }
 
-        mo.setStatus(remain.signum() > 0 ? OrderStatus.REJECTED : OrderStatus.FILLED);
+        mo.setStatus(remain.signum() > 0
+                ? (mo.getFilledQuantity().signum() > 0 ? OrderStatus.PARTIALLY_FILLED : OrderStatus.REJECTED)
+                : OrderStatus.FILLED);
         return trades;
     }
 
@@ -368,16 +389,38 @@ public final class L3OrderBook {
 
     private boolean wouldSweepFiveLevels(BigDecimal qty, Side side, BigDecimal limit) {
         var book = side == Side.BUY ? asks : bids;
-        BigDecimal acc = BigDecimal.ZERO;
-        int count = 0;
+        BigDecimal remain = qty;
+        int matchingLevels = 0;
         for (BigDecimal p : side == Side.BUY ? book.keySet() : book.descendingKeySet()) {
-            if (count++ >= MAX_LEVELS) break;
             if (side == Side.BUY && p.compareTo(limit) > 0) break;
             if (side == Side.SELL && p.compareTo(limit) < 0) break;
-            acc = acc.add(book.get(p).totalQty);
-            if (acc.compareTo(qty) >= 0) return false;
+            PriceLevel level = book.get(p);
+            if (level == null || level.totalQty.signum() <= 0) {
+                continue;
+            }
+            matchingLevels++;
+            remain = remain.subtract(level.totalQty);
+            if (remain.signum() <= 0) return false;
+            if (matchingLevels >= MAX_LEVELS) return true;
         }
-        return true;
+        return false;
+    }
+
+    private boolean wouldSweepMarketBeyondFiveLevels(BigDecimal qty, Side side) {
+        var book = side == Side.BUY ? asks : bids;
+        BigDecimal remain = qty;
+        int matchingLevels = 0;
+        for (BigDecimal p : side == Side.BUY ? book.keySet() : book.descendingKeySet()) {
+            PriceLevel level = book.get(p);
+            if (level == null || level.totalQty.signum() <= 0) {
+                continue;
+            }
+            matchingLevels++;
+            remain = remain.subtract(level.totalQty);
+            if (remain.signum() <= 0) return false;
+            if (matchingLevels >= MAX_LEVELS) return true;
+        }
+        return false;
     }
 
     private void addToBook(Order order, BigDecimal qty) {
@@ -394,7 +437,7 @@ public final class L3OrderBook {
         orderIndex.put(order.getOrderId(), entry);
     }
 
-    public boolean cancelOrder(String orderId) {
+    public synchronized boolean cancelOrder(String orderId) {
         OrderEntry e = orderIndex.remove(orderId);
         if (e == null || e.remain.signum() <= 0) return false;
 
@@ -411,7 +454,7 @@ public final class L3OrderBook {
     }
 
     // getDepth、snapshot 方法保持不变...
-    public List<DepthLevel> getDepth(int levels) {
+    public synchronized List<DepthLevel> getDepth(int levels) {
         List<DepthLevel> list = new ArrayList<>();
         int c = 0;
         for (var e : bids.entrySet()) { if (++c > levels) break; list.add(new DepthLevel(e.getKey(), e.getValue().totalQty)); }
@@ -420,13 +463,13 @@ public final class L3OrderBook {
         return list;
     }
 
-    public List<Map.Entry<BigDecimal, BigDecimal>> getBidsForSnapshot() {
+    public synchronized List<Map.Entry<BigDecimal, BigDecimal>> getBidsForSnapshot() {
         return bids.entrySet().stream()
                 .map(e -> Map.entry(e.getKey(), e.getValue().totalQty))
                 .toList();
     }
 
-    public List<Map.Entry<BigDecimal, BigDecimal>> getAsksForSnapshot() {
+    public synchronized List<Map.Entry<BigDecimal, BigDecimal>> getAsksForSnapshot() {
         return asks.entrySet().stream()
                 .map(e -> Map.entry(e.getKey(), e.getValue().totalQty))
                 .toList();

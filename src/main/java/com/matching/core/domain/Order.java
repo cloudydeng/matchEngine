@@ -1,6 +1,7 @@
 package com.matching.core.domain;
 
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -68,10 +69,12 @@ public class Order {
         }
     }
 
+    @JsonIgnore
     public boolean isFilled() {
-        return status == OrderStatus.FILLED || remainingQuantity.signum() <= 0;
+        return status == OrderStatus.FILLED || (remainingQuantity != null && remainingQuantity.signum() <= 0);
     }
 
+    @JsonIgnore
     public boolean isMarketOrder() {
         return type == OrderType.MARKET;
     }

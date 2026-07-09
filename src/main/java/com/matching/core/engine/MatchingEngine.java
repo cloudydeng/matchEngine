@@ -44,6 +44,7 @@ public class MatchingEngine {
         // 自动打时间戳（价格时间优先级关键！）
         order.setTimestamp(System.nanoTime());
 
+        persistence.appendSubmit(order);
         return orderBook.processOrder(order);
     }
 
@@ -51,6 +52,7 @@ public class MatchingEngine {
      * 撤单（推荐用 orderId 撤单，这是生产唯一正确方式）
      */
     public boolean cancelOrder(String orderId) {
+        persistence.appendCancel(orderId);
         return orderBook.cancelOrder(orderId);
     }
 
